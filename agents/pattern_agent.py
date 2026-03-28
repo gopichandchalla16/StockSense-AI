@@ -1,207 +1,214 @@
 """
-PatternDetectorAgent — StockSense AI
-Team NeuralForge | ET GenAI Hackathon 2026
+PatternDetectorAgent — StockSense AI | NeuralForge
+ET GenAI Hackathon 2026 | PS #6
 
-Detects technical chart patterns on NSE stocks using yfinance + pandas-ta.
+Pure pandas implementation of:
+  RSI-14, MACD(12,26,9), Bollinger Bands(20,2),
+  SMA-50, SMA-200, EMA-20, EMA-50
+No pandas-ta / numba / llvmlite dependency.
 """
-
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 from typing import Dict, Any, List
 
 
-def fetch_stock_data(ticker: str, period: str = "6mo") -> pd.DataFrame:
-    """Fetch OHLCV data for any NSE ticker via yfinance."""
-    nse_ticker = ticker.upper() + ".NS" if not ticker.upper().endswith(".NS") else ticker.upper()
+# ── Indicator helpers ────────────────────────────────────────────────────────
+
+def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / loss.replace(0, 1e-9)
+    return 100 - (100 / (1 + rs))
+
+
+def _ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def _macd(series: pd.Series, fast=12, slow=26, signal=9):
+    macd_line = _ema(series, fast) - _ema(series, slow)
+    signal_line = _ema(macd_line, signal)
+    return macd_line, signal_line
+
+
+def _bollinger(series: pd.Series, period: int = 20, std: float = 2.0):
+    mid = series.rolling(period).mean()
+    sd = series.rolling(period).std()
+    return mid + std * sd, mid - std * sd   # upper, lower
+
+
+def _sma(series: pd.Series, period: int) -> pd.Series:
+    return series.rolling(period).mean()
+
+
+# ── Data fetch ───────────────────────────────────────────────────────────────
+
+def fetch_stock_data(ticker: str, period: str = "1y") -> pd.DataFrame:
+    nse = ticker.upper()
+    if not nse.endswith(".NS"):
+        nse += ".NS"
     try:
-        df = yf.download(nse_ticker, period=period, auto_adjust=True, progress=False)
+        df = yf.download(nse, period=period, auto_adjust=True, progress=False)
         if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[0] for col in df.columns]
+            df.columns = [c[0] for c in df.columns]
         return df
     except Exception as e:
         print(f"[PatternAgent] yfinance error: {e}")
         return pd.DataFrame()
 
 
+# ── Main detection ───────────────────────────────────────────────────────────
+
 def detect_patterns(ticker: str) -> Dict[str, Any]:
     """
-    Run technical analysis on a NSE ticker and return detected patterns.
-    Detects: RSI, MACD crossover, Golden/Death Cross, Bollinger Bands, EMA.
-    Returns typed dict with patterns, price data, and 90-day OHLCV.
+    Run full technical analysis on an NSE ticker.
+    Returns patterns, confidence scores, price data (90-day OHLCV).
     """
     df = fetch_stock_data(ticker)
-
-    # Fallback: try 3-month data if 6-month fails
     if df.empty:
         df = fetch_stock_data(ticker, period="3mo")
 
-    if df.empty:
+    if df.empty or len(df) < 30:
         return {
-            "ticker": ticker.upper(),
+            "ticker": ticker.upper().replace(".NS", ""),
             "current_price": 0,
             "price_change_1d": 0,
             "price_change_5d": 0,
             "volume": 0,
-            "patterns": [{"pattern": "Data unavailable", "confidence": 0, "signal": "NEUTRAL"}],
+            "patterns": [{"pattern": "Data unavailable", "confidence": 0, "signal": "NEUTRAL", "detail": "Could not fetch NSE data."}],
             "data": [],
-            "error": f"Could not fetch data for {ticker}"
+            "error": f"No data for {ticker}"
         }
 
-    # Apply indicators
-    df.ta.rsi(length=14, append=True)
-    df.ta.macd(fast=12, slow=26, signal=9, append=True)
-    df.ta.bbands(length=20, append=True)
-    df.ta.sma(length=50, append=True)
-    df.ta.sma(length=200, append=True)
-    df.ta.ema(length=20, append=True)
-    df.ta.ema(length=50, append=True)
+    close = df["Close"].squeeze()
 
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
+    # Compute all indicators
+    rsi       = _rsi(close, 14)
+    macd_l, macd_s = _macd(close)
+    bb_upper, bb_lower = _bollinger(close)
+    sma50     = _sma(close, 50)
+    sma200    = _sma(close, 200)
+    ema20     = _ema(close, 20)
+    ema50     = _ema(close, 50)
+
+    latest_idx = -1
+    prev_idx   = -2
+
+    def v(series, idx):   # safe scalar getter
+        try:
+            val = series.iloc[idx]
+            return float(val) if pd.notna(val) else None
+        except Exception:
+            return None
+
     patterns_found: List[Dict] = []
 
-    # --- RSI Analysis ---
-    rsi_cols = [c for c in df.columns if str(c).startswith("RSI_")]
-    if rsi_cols:
-        rsi_val = float(latest[rsi_cols[0]])
+    # ── RSI ──────────────────────────────────────────────────────────────────
+    rsi_val = v(rsi, latest_idx)
+    if rsi_val is not None:
         if rsi_val < 30:
             patterns_found.append({
                 "pattern": "RSI Oversold",
                 "confidence": 0.78,
                 "signal": "BULLISH",
-                "detail": f"RSI at {rsi_val:.1f} — strong buying zone below 30"
+                "detail": f"RSI = {rsi_val:.1f} — below 30, potential reversal zone"
             })
         elif rsi_val > 70:
             patterns_found.append({
                 "pattern": "RSI Overbought",
                 "confidence": 0.75,
                 "signal": "BEARISH",
-                "detail": f"RSI at {rsi_val:.1f} — potential selling pressure above 70"
+                "detail": f"RSI = {rsi_val:.1f} — above 70, potential pullback zone"
             })
-        elif 40 <= rsi_val <= 60:
+
+    # ── MACD Crossover ───────────────────────────────────────────────────────
+    cm, cs = v(macd_l, latest_idx), v(macd_s, latest_idx)
+    pm, ps = v(macd_l, prev_idx),   v(macd_s, prev_idx)
+    if None not in (cm, cs, pm, ps):
+        if pm < ps and cm > cs:
             patterns_found.append({
-                "pattern": "RSI Neutral Zone",
-                "confidence": 0.55,
-                "signal": "NEUTRAL",
-                "detail": f"RSI at {rsi_val:.1f} — no extreme signal"
+                "pattern": "MACD Bullish Crossover",
+                "confidence": 0.82,
+                "signal": "BULLISH",
+                "detail": "MACD line crossed above signal — momentum turning positive"
+            })
+        elif pm > ps and cm < cs:
+            patterns_found.append({
+                "pattern": "MACD Bearish Crossover",
+                "confidence": 0.80,
+                "signal": "BEARISH",
+                "detail": "MACD line crossed below signal — momentum turning negative"
             })
 
-    # --- MACD Crossover ---
-    macd_cols = [c for c in df.columns if "MACD" in str(c) and "MACDs" not in str(c) and "MACDh" not in str(c)]
-    macd_signal_cols = [c for c in df.columns if "MACDs_" in str(c)]
-    if macd_cols and macd_signal_cols:
-        try:
-            curr_macd = float(latest[macd_cols[0]])
-            curr_sig = float(latest[macd_signal_cols[0]])
-            prev_macd = float(prev[macd_cols[0]])
-            prev_sig = float(prev[macd_signal_cols[0]])
-            if prev_macd < prev_sig and curr_macd > curr_sig:
-                patterns_found.append({
-                    "pattern": "MACD Bullish Crossover",
-                    "confidence": 0.82,
-                    "signal": "BULLISH",
-                    "detail": "MACD line crossed above signal line — momentum turning up"
-                })
-            elif prev_macd > prev_sig and curr_macd < curr_sig:
-                patterns_found.append({
-                    "pattern": "MACD Bearish Crossover",
-                    "confidence": 0.80,
-                    "signal": "BEARISH",
-                    "detail": "MACD line crossed below signal line — momentum turning down"
-                })
-        except Exception:
-            pass
+    # ── Golden / Death Cross ─────────────────────────────────────────────────
+    c50, c200 = v(sma50, latest_idx), v(sma200, latest_idx)
+    p50, p200 = v(sma50, prev_idx),   v(sma200, prev_idx)
+    if None not in (c50, c200, p50, p200):
+        if p50 < p200 and c50 > c200:
+            patterns_found.append({
+                "pattern": "Golden Cross",
+                "confidence": 0.88,
+                "signal": "STRONG BULLISH",
+                "detail": "SMA-50 crossed above SMA-200 — major long-term bullish signal"
+            })
+        elif p50 > p200 and c50 < c200:
+            patterns_found.append({
+                "pattern": "Death Cross",
+                "confidence": 0.87,
+                "signal": "STRONG BEARISH",
+                "detail": "SMA-50 crossed below SMA-200 — major long-term bearish signal"
+            })
 
-    # --- Golden Cross / Death Cross ---
-    sma50_cols = [c for c in df.columns if "SMA_50" in str(c)]
-    sma200_cols = [c for c in df.columns if "SMA_200" in str(c)]
-    if sma50_cols and sma200_cols:
-        try:
-            curr_50 = float(latest[sma50_cols[0]])
-            curr_200 = float(latest[sma200_cols[0]])
-            prev_50 = float(prev[sma50_cols[0]])
-            prev_200 = float(prev[sma200_cols[0]])
-            if prev_50 < prev_200 and curr_50 > curr_200:
-                patterns_found.append({
-                    "pattern": "Golden Cross",
-                    "confidence": 0.88,
-                    "signal": "STRONG BULLISH",
-                    "detail": "50-day MA crossed above 200-day MA — long-term bullish signal"
-                })
-            elif prev_50 > prev_200 and curr_50 < curr_200:
-                patterns_found.append({
-                    "pattern": "Death Cross",
-                    "confidence": 0.87,
-                    "signal": "STRONG BEARISH",
-                    "detail": "50-day MA crossed below 200-day MA — long-term bearish signal"
-                })
-        except Exception:
-            pass
+    # ── Bollinger Band Breakout ───────────────────────────────────────────────
+    price_now = v(close, latest_idx)
+    bbu = v(bb_upper, latest_idx)
+    bbl = v(bb_lower, latest_idx)
+    if None not in (price_now, bbu, bbl):
+        if price_now > bbu:
+            patterns_found.append({
+                "pattern": "Bollinger Band Upper Breakout",
+                "confidence": 0.73,
+                "signal": "BULLISH BREAKOUT",
+                "detail": f"Price ₹{price_now:,.2f} broke above upper band ₹{bbu:,.2f}"
+            })
+        elif price_now < bbl:
+            patterns_found.append({
+                "pattern": "Bollinger Band Lower Breakdown",
+                "confidence": 0.72,
+                "signal": "BEARISH BREAKDOWN",
+                "detail": f"Price ₹{price_now:,.2f} broke below lower band ₹{bbl:,.2f}"
+            })
 
-    # --- Bollinger Band Breakout ---
-    bb_upper_cols = [c for c in df.columns if "BBU_" in str(c)]
-    bb_lower_cols = [c for c in df.columns if "BBL_" in str(c)]
-    if bb_upper_cols and bb_lower_cols:
-        try:
-            close_price = float(latest["Close"])
-            bb_upper = float(latest[bb_upper_cols[0]])
-            bb_lower = float(latest[bb_lower_cols[0]])
-            if close_price > bb_upper:
-                patterns_found.append({
-                    "pattern": "Bollinger Band Upper Breakout",
-                    "confidence": 0.73,
-                    "signal": "BULLISH BREAKOUT",
-                    "detail": f"Price ₹{close_price:.2f} broke above upper band ₹{bb_upper:.2f}"
-                })
-            elif close_price < bb_lower:
-                patterns_found.append({
-                    "pattern": "Bollinger Band Lower Breakdown",
-                    "confidence": 0.72,
-                    "signal": "BEARISH BREAKDOWN",
-                    "detail": f"Price ₹{close_price:.2f} broke below lower band ₹{bb_lower:.2f}"
-                })
-        except Exception:
-            pass
+    # ── EMA 20/50 Crossover ──────────────────────────────────────────────────
+    ce20, ce50 = v(ema20, latest_idx), v(ema50, latest_idx)
+    pe20, pe50 = v(ema20, prev_idx),   v(ema50, prev_idx)
+    if None not in (ce20, ce50, pe20, pe50):
+        if pe20 < pe50 and ce20 > ce50:
+            patterns_found.append({
+                "pattern": "EMA 20/50 Bullish Crossover",
+                "confidence": 0.76,
+                "signal": "BULLISH",
+                "detail": "Short EMA crossed above medium EMA — upward momentum confirmed"
+            })
+        elif pe20 > pe50 and ce20 < ce50:
+            patterns_found.append({
+                "pattern": "EMA 20/50 Bearish Crossover",
+                "confidence": 0.74,
+                "signal": "BEARISH",
+                "detail": "Short EMA crossed below medium EMA — downward momentum confirmed"
+            })
 
-    # --- EMA Crossover ---
-    ema20_cols = [c for c in df.columns if "EMA_20" in str(c)]
-    ema50_cols = [c for c in df.columns if "EMA_50" in str(c)]
-    if ema20_cols and ema50_cols:
-        try:
-            curr_e20 = float(latest[ema20_cols[0]])
-            curr_e50 = float(latest[ema50_cols[0]])
-            prev_e20 = float(prev[ema20_cols[0]])
-            prev_e50 = float(prev[ema50_cols[0]])
-            if prev_e20 < prev_e50 and curr_e20 > curr_e50:
-                patterns_found.append({
-                    "pattern": "EMA 20/50 Bullish Crossover",
-                    "confidence": 0.76,
-                    "signal": "BULLISH",
-                    "detail": "Short-term EMA crossed above medium-term EMA"
-                })
-            elif prev_e20 > prev_e50 and curr_e20 < curr_e50:
-                patterns_found.append({
-                    "pattern": "EMA 20/50 Bearish Crossover",
-                    "confidence": 0.74,
-                    "signal": "BEARISH",
-                    "detail": "Short-term EMA crossed below medium-term EMA"
-                })
-        except Exception:
-            pass
-
-    # Calculate price changes
+    # ── Price changes ────────────────────────────────────────────────────────
     try:
-        current_price = float(latest["Close"])
-        prev_close = float(prev["Close"])
-        price_change_1d = round(((current_price - prev_close) / prev_close) * 100, 2)
-        week_start = float(df.iloc[-5]["Close"]) if len(df) >= 5 else prev_close
-        price_change_5d = round(((current_price - week_start) / week_start) * 100, 2)
-        volume = int(latest["Volume"]) if "Volume" in latest else 0
+        current_price  = float(df["Close"].iloc[-1])
+        prev_close     = float(df["Close"].iloc[-2])
+        close_5d_ago   = float(df["Close"].iloc[-6]) if len(df) >= 6 else prev_close
+        change_1d = round(((current_price - prev_close)   / prev_close)   * 100, 2)
+        change_5d = round(((current_price - close_5d_ago) / close_5d_ago) * 100, 2)
+        volume    = int(df["Volume"].iloc[-1])
     except Exception:
-        current_price = 0
-        price_change_1d = 0
-        price_change_5d = 0
+        current_price = change_1d = change_5d = 0
         volume = 0
 
     if not patterns_found:
@@ -209,25 +216,23 @@ def detect_patterns(ticker: str) -> Dict[str, Any]:
             "pattern": "No Strong Pattern Detected",
             "confidence": 0.50,
             "signal": "NEUTRAL",
-            "detail": "Market is in a consolidation phase. Wait for a clearer signal."
+            "detail": "Market is in consolidation — wait for a clearer setup."
         })
 
     return {
-        "ticker": ticker.upper().replace(".NS", ""),
-        "current_price": round(current_price, 2),
-        "price_change_1d": price_change_1d,
-        "price_change_5d": price_change_5d,
-        "volume": volume,
-        "patterns": patterns_found,
-        "data": df.tail(90).reset_index().to_dict("records")
+        "ticker":         ticker.upper().replace(".NS", ""),
+        "current_price":  round(current_price, 2),
+        "price_change_1d": change_1d,
+        "price_change_5d": change_5d,
+        "volume":         volume,
+        "patterns":       patterns_found,
+        "data":           df.tail(90).reset_index().to_dict("records")
     }
 
 
 if __name__ == "__main__":
-    print("Testing PatternDetectorAgent with RELIANCE...")
     result = detect_patterns("RELIANCE")
-    print(f"Ticker: {result['ticker']}")
-    print(f"Price: ₹{result['current_price']} | 1D: {result['price_change_1d']}%")
-    print(f"Patterns found: {len(result['patterns'])}")
-    for p in result['patterns']:
-        print(f"  - {p['pattern']} ({p['signal']}) | Confidence: {int(p['confidence']*100)}%")
+    print(f"Ticker : {result['ticker']}")
+    print(f"Price  : ₹{result['current_price']} | 1D: {result['price_change_1d']}%")
+    for p in result["patterns"]:
+        print(f"  → {p['pattern']} ({p['signal']}) {int(p['confidence']*100)}%")
