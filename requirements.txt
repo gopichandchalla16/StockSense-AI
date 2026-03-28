@@ -1,9 +1,12 @@
+# StockSense AI — Requirements
+# Team NeuralForge | ET GenAI Hackathon 2026 | PS #6
+# NOTE: pandas-ta removed — uses numba/llvmlite which breaks on Python 3.14
+# All indicators reimplemented with pure pandas in pattern_agent.py
+
 langchain>=0.2.0
 langchain-google-genai>=1.0.0
 langgraph>=0.1.0
 yfinance>=0.2.38
-pandas-ta>=0.3.14b
-faiss-cpu>=1.7.4
 streamlit>=1.32.0
 plotly>=5.20.0
 python-dotenv>=1.0.0
