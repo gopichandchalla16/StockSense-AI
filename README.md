@@ -2,7 +2,7 @@
 
 > **Team NeuralForge** | ET GenAI Hackathon 2026 | Problem Statement #6 — AI for the Indian Investor
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stocksense-ai.streamlit.app)
+
 
 StockSense AI is a **7-agent GenAI system** that turns India's NSE market data into actionable intelligence for 14 crore+ retail investors — combining real-time chart pattern detection, opportunity radar, FII/DII smart money tracking, IPO intelligence, news sentiment analysis, and portfolio-aware AI chat.
 
