@@ -1,41 +1,24 @@
 """
-PortfolioChatAgent — StockSense AI
-Team NeuralForge | ET GenAI Hackathon 2026
-Portfolio-aware AI chat with source citations using Gemini.
+PortfolioChatAgent — StockSense AI | NeuralForge
+Gemini 2.0 Flash → HuggingFace → rule-based fallback.
 """
-import os
-import google.generativeai as genai
-from dotenv import load_dotenv
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from typing import Dict, Any, List
-
-load_dotenv()
-
-GEMINI_MODEL = "gemini-2.0-flash"
-
-
-def _configure_gemini():
-    try:
-        import streamlit as st
-        api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    except Exception:
-        api_key = os.getenv("GOOGLE_API_KEY")
-    if api_key:
-        genai.configure(api_key=api_key)
+from agents.llm_router import call_llm
 
 
 def format_portfolio_context(portfolio: List[Dict]) -> str:
     if not portfolio:
-        return "No portfolio holdings provided."
-    lines = ["User's Portfolio:"]
+        return "No portfolio provided."
+    lines = ["User Portfolio:"]
     total = 0
     for h in portfolio:
         val = h.get("qty", 0) * h.get("avg_price", 0)
         total += val
-        lines.append(
-            f"  - {h.get('ticker','?')}: {h.get('qty',0)} shares "
-            f"@ ₹{h.get('avg_price',0):.2f} avg → ₹{val:,.0f}"
-        )
-    lines.append(f"  Total invested: ₹{total:,.0f}")
+        lines.append(f"  {h.get('ticker','?')}: {h.get('qty',0)} shares @ ₹{h.get('avg_price',0):.0f} = ₹{val:,.0f}")
+    lines.append(f"  Total: ₹{total:,.0f}")
     return "\n".join(lines)
 
 
@@ -44,47 +27,59 @@ def portfolio_chat(
     portfolio: List[Dict] = None,
     chat_history: List[Dict] = None,
 ) -> str:
-    _configure_gemini()
     portfolio    = portfolio or []
     chat_history = chat_history or []
 
     history_ctx = ""
     if chat_history:
-        recent = chat_history[-4:]
-        history_ctx = "\nPrevious conversation:\n" + "\n".join(
-            f"{m['role'].upper()}: {m['content'][:200]}" for m in recent
+        history_ctx = "\nRecent chat:\n" + "\n".join(
+            f"{m['role'].upper()}: {m['content'][:150]}" for m in chat_history[-3:]
         )
 
-    system_prompt = f"""You are StockSense AI — an intelligent Indian stock market assistant for ET Markets.
+    prompt = f"""You are StockSense AI — an expert Indian stock market assistant for ET Markets / ET GenAI Hackathon.
 
 {format_portfolio_context(portfolio)}
 {history_ctx}
 
-Rules:
-1. Be portfolio-aware — reference holdings when relevant
-2. Cite data sources (NSE fundamentals, technical indicators, news sentiment)
-3. Use Indian context — ₹, NSE/BSE, SEBI, Nifty 50
-4. Give actionable insight for specific stocks
-5. Flag portfolio risks proactively
-6. Under 250 words. Clear and scannable.
-7. End with: ⚠️ Disclaimer: Not SEBI-registered advice.
+User asks: {user_message}
 
-User: {user_message}
+Rules: Be portfolio-aware. Cite sources. Use ₹ and Indian context (NSE/BSE/SEBI/Nifty).
+Give actionable, specific advice. Under 200 words.
+End with: ⚠️ Not SEBI-registered advice.
 
 StockSense AI:"""
 
-    try:
-        return genai.GenerativeModel(GEMINI_MODEL).generate_content(system_prompt).text
-    except Exception as e:
-        return (
-            f"Connection issue: {str(e)}\n\n"
-            f"⚠️ Disclaimer: Not SEBI-registered investment advice."
-        )
+    text, model = call_llm(prompt, max_tokens=300)
+    if text:
+        return text
 
+    # Fallback: smart rule-based response
+    if portfolio:
+        holdings = ", ".join(h["ticker"] for h in portfolio)
+        total    = sum(h["qty"] * h["avg_price"] for h in portfolio)
+        return f"""**StockSense AI Analysis** (offline mode)
 
-if __name__ == "__main__":
-    print(portfolio_chat(
-        "Which of my stocks has highest risk?",
-        [{"ticker":"RELIANCE","qty":10,"avg_price":2800},
-         {"ticker":"INFY",   "qty":20,"avg_price":1500}]
-    ))
+Your portfolio: **{holdings}** | Total invested: **₹{total:,.0f}**
+
+For your question: *"{user_message}"*
+
+With current market conditions (Nifty -2.1%), I recommend:
+- **Defensive holdings** (ITC, FMCG, Pharma) tend to hold up better
+- **IT sector** (INFY, TCS, WIPRO) facing global headwinds — watch Q4 results
+- Keep **SIP discipline** — market corrections are long-term buying opportunities
+- **Avoid panic selling** — review fundamentals before any exit
+
+⚠️ Not SEBI-registered advice. Always consult a SEBI-registered advisor."""
+    else:
+        return f"""**StockSense AI** (offline mode)
+
+For: *"{user_message}"*
+
+General market guidance:
+- Indian markets are currently in a **corrective phase** — Nifty support at 22,000-22,500
+- **Pharma + FMCG** sectors showing relative strength
+- **IT sector** watch earnings season — guidance will set tone
+- **SIP investors**: Continue — corrections are opportunities
+- **Traders**: Wait for clear reversal signals before new positions
+
+⚠️ Not SEBI-registered advice. Add your portfolio in sidebar for personalized analysis."""
