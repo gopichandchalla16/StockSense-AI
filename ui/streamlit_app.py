@@ -6,7 +6,7 @@ Team NeuralForge | ET GenAI Hackathon 2026 | PS #6
 import sys
 import os
 
-# ── Critical: add repo root to sys.path so all modules resolve on Streamlit Cloud
+# ── Critical: add repo root to sys.path
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -25,7 +25,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Agent imports (after sys.path fix) ───────────────────────────────────────
 from orchestrator.langgraph_flow import analyze_stock
 from agents.portfolio_chat import portfolio_chat
 from agents.fii_dii_agent import fetch_fii_dii_data, get_smart_money_signal
@@ -33,8 +32,9 @@ from agents.ipo_agent import get_ipo_intelligence
 from agents.morning_briefing import generate_morning_briefing
 from ui.charts.sector_heatmap import build_sector_heatmap
 from ui.charts.race_chart import build_race_chart
+from utils.ticker_resolver import POPULAR_TICKERS, resolve_ticker
 
-# ── Morning Briefing ────────────────────────────────────────────────────────
+# ── Morning Briefing
 if "morning_briefing" not in st.session_state:
     with st.spinner("🌅 Generating today's AI market briefing..."):
         try:
@@ -42,7 +42,7 @@ if "morning_briefing" not in st.session_state:
         except Exception as e:
             st.session_state.morning_briefing = (
                 f"🌅 **Morning Briefing unavailable**: {str(e)}\n\n"
-                "Please check your GOOGLE_API_KEY in Streamlit secrets."
+                "Check your GOOGLE_API_KEY in Streamlit secrets."
             )
 
 with st.expander("🌅 Today's AI Morning Briefing — tap to expand", expanded=False):
@@ -50,7 +50,7 @@ with st.expander("🌅 Today's AI Morning Briefing — tap to expand", expanded=
 
 st.markdown("---")
 
-# ── Header ─────────────────────────────────────────────────────────────
+# ── Header
 col_h1, col_h2 = st.columns([2, 1])
 with col_h1:
     st.title("📈 StockSense AI")
@@ -67,7 +67,7 @@ with col_h2:
 
 st.markdown("---")
 
-# ── Sidebar ───────────────────────────────────────────────────────────────
+# ── Sidebar
 st.sidebar.title("🗂️ My Portfolio")
 st.sidebar.caption("Add your NSE holdings for portfolio-aware analysis")
 portfolio = []
@@ -86,44 +86,100 @@ st.sidebar.caption("🔒 Free stack: yfinance + Gemini + LangGraph")
 st.sidebar.caption("🚀 Deployed free on Streamlit Cloud")
 st.sidebar.caption("⚠️ Not SEBI-registered investment advice")
 
-# ── Tabs ─────────────────────────────────────────────────────────────────
+# ── Tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🔍 Stock Analysis", "🌡️ Sector Heatmap", "🏆 Race Chart",
     "🏦 FII/DII Tracker", "🚀 IPO Intelligence", "💬 Portfolio Chat",
 ])
 
-# ══ TAB 1 ─ STOCK ANALYSIS ═════════════════════════════════════════════════════════
+# ══ TAB 1 ─ STOCK ANALYSIS
 with tab1:
     st.subheader("🔍 Multi-Agent Stock Analysis")
-    st.caption("4 AI agents run in sequence: Pattern Detection → Signal Finding → News Sentiment → AI Brief")
+    st.caption("4 AI agents: Pattern Detection → Signal Finding → News Sentiment → AI Brief")
+
+    # ── Ticker input + popular quick-select
     c1, c2 = st.columns([4, 1])
     with c1:
-        ticker_input = st.text_input("Enter NSE Ticker",
-            placeholder="e.g. RELIANCE, HDFCBANK, TCS, INFY, WIPRO", key="main_ticker")
+        ticker_input = st.text_input(
+            "Enter NSE Ticker or Company Name",
+            placeholder="e.g. RELIANCE, INFY, TCS, HDFCBANK, SBIN, WIPRO",
+            key="main_ticker",
+        )
     with c2:
         st.write("")
         st.write("")
         analyze_btn = st.button("🚀 Analyze", type="primary", use_container_width=True)
 
-    if analyze_btn and ticker_input.strip():
-        ticker = ticker_input.strip().upper()
-        with st.spinner(f"Running 4-agent LangGraph pipeline on {ticker}... (15–25 seconds)"):
-            result = analyze_stock(ticker)
+    # Popular ticker quick buttons
+    st.caption("💡 **Quick Select** — click any ticker below:")
+    quick_cols = st.columns(10)
+    quick_tickers = ["RELIANCE","INFY","TCS","HDFCBANK","ICICIBANK",
+                     "SBIN","WIPRO","ITC","MARUTI","TATAMOTORS"]
+    for i, qt in enumerate(quick_tickers):
+        if quick_cols[i].button(qt, key=f"quick_{qt}"):
+            st.session_state["main_ticker"] = qt
+            st.rerun()
 
+    # Second row of quick tickers
+    quick_cols2 = st.columns(10)
+    quick_tickers2 = ["AXISBANK","BAJFINANCE","HCLTECH","TECHM","TITAN",
+                      "SUNPHARMA","DRREDDY","LT","BHARTIARTL","ZOMATO"]
+    for i, qt in enumerate(quick_tickers2):
+        if quick_cols2[i].button(qt, key=f"quick2_{qt}"):
+            st.session_state["main_ticker"] = qt
+            st.rerun()
+
+    st.markdown("")
+
+    # NSE Ticker reference expander
+    with st.expander("📖 NSE Ticker Reference — Company Name → Symbol"):
+        st.markdown("""
+| Company Name | NSE Ticker | Company Name | NSE Ticker |
+|---|---|---|---|
+| Infosys | **INFY** | Reliance Industries | **RELIANCE** |
+| TCS | **TCS** | HDFC Bank | **HDFCBANK** |
+| ICICI Bank | **ICICIBANK** | Axis Bank | **AXISBANK** |
+| State Bank (SBI) | **SBIN** | Wipro | **WIPRO** |
+| Bajaj Finance | **BAJFINANCE** | HCL Tech | **HCLTECH** |
+| Tech Mahindra | **TECHM** | Tata Motors | **TATAMOTORS** |
+| Tata Steel | **TATASTEEL** | Maruti Suzuki | **MARUTI** |
+| Sun Pharma | **SUNPHARMA** | Dr. Reddy's | **DRREDDY** |
+| Cipla | **CIPLA** | Titan | **TITAN** |
+| Bharti Airtel | **BHARTIARTL** | L&T | **LT** |
+| NTPC | **NTPC** | ONGC | **ONGC** |
+| Coal India | **COALINDIA** | ITC | **ITC** |
+| Adani Ports | **ADANIPORTS** | Zomato | **ZOMATO** |
+| Asian Paints | **ASIANPAINT** | HUL | **HINDUNILVR** |
+| IRCTC | **IRCTC** | HAL | **HAL** |
+        """)
+
+    if analyze_btn and ticker_input.strip():
+        raw_input = ticker_input.strip()
+        resolved, was_corrected = resolve_ticker(raw_input)
+
+        if was_corrected:
+            st.info(f"🔄 Auto-corrected: **{raw_input.upper()}** → **{resolved}** (NSE symbol)")
+
+        with st.spinner(f"Running 4-agent LangGraph pipeline on **{resolved}**... (15–25s)"):
+            result = analyze_stock(raw_input)  # resolve_ticker runs inside analyze_stock
+
+        # Agent Audit Trail
         with st.expander("🤖 Live Agent Activity Log", expanded=True):
             for log in result.get("step_log", []):
                 if "✅" in log:    st.success(log)
                 elif "❌" in log: st.error(log)
                 elif "⚠️" in log: st.warning(log)
+                elif "🔄" in log: st.info(log)
                 else:              st.info(log)
 
         pd_data   = result.get("pattern_data") or {}
         sd_data   = result.get("signal_data") or {}
         sent_data = result.get("sentiment_data") or {}
+        price     = pd_data.get("current_price", 0)
 
-        if pd_data.get("current_price"):
+        if price and price > 0:
             m1,m2,m3,m4,m5 = st.columns(5)
-            m1.metric("💰 Price", f"₹{pd_data['current_price']:,.2f}")
+            m1.metric("💰 Price", f"₹{price:,.2f}")
             m2.metric("📅 1D", f"{pd_data['price_change_1d']:+.2f}%", delta=f"{pd_data['price_change_1d']:+.2f}%")
             m3.metric("📆 5D", f"{pd_data['price_change_5d']:+.2f}%", delta=f"{pd_data['price_change_5d']:+.2f}%")
             m4.metric("🏢 Sector", sd_data.get("sector","N/A"))
@@ -137,21 +193,24 @@ with tab1:
                     date_col = "Date" if "Date" in df_c.columns else "index"
                     fig_c = go.Figure(go.Candlestick(
                         x=df_c[date_col], open=df_c["Open"], high=df_c["High"],
-                        low=df_c["Low"],  close=df_c["Close"], name=ticker,
+                        low=df_c["Low"],  close=df_c["Close"], name=resolved,
                         increasing_line_color="#27ae60", decreasing_line_color="#c0392b"
                     ))
-                    fig_c.update_layout(title=f"📈 {ticker} — 90-Day Candlestick (NSE)",
-                        template="plotly_dark", height=420, xaxis_rangeslider_visible=False,
-                        margin=dict(t=50,l=10,r=10,b=10))
+                    fig_c.update_layout(
+                        title=f"📈 {resolved} — 90-Day Candlestick (NSE)",
+                        template="plotly_dark", height=420,
+                        xaxis_rangeslider_visible=False,
+                        margin=dict(t=50,l=10,r=10,b=10)
+                    )
                     st.plotly_chart(fig_c, use_container_width=True)
                 except Exception as e:
-                    st.warning(f"Chart: {e}")
+                    st.warning(f"Chart render: {e}")
 
             left, right = st.columns(2)
             with left:
                 st.subheader("📈 Chart Patterns")
                 for p in pd_data.get("patterns",[]):
-                    sig = p.get("signal","NEUTRAL")
+                    sig  = p.get("signal","NEUTRAL")
                     icon = "🟢" if "BULL" in sig else "🔴" if "BEAR" in sig else "🟡"
                     st.markdown(f"{icon} **{p['pattern']}**")
                     st.caption(f"{int(p.get('confidence',0.5)*100)}% | {sig}")
@@ -170,17 +229,17 @@ with tab1:
             if any(v for v in fund.values() if v is not None):
                 st.subheader("📊 Fundamentals")
                 f1,f2,f3,f4 = st.columns(4)
-                f1.metric("P/E", fund.get("pe_ratio","N/A"))
-                f2.metric("Div Yield", f"{fund.get('div_yield','N/A')}%")
+                f1.metric("P/E",      fund.get("pe_ratio","N/A"))
+                f2.metric("Div Yield",f"{fund.get('div_yield','N/A')}%")
                 f3.metric("52W High", f"₹{fund.get('52w_high','N/A')}")
                 f4.metric("52W Low",  f"₹{fund.get('52w_low','N/A')}")
 
             st.subheader("📰 News Sentiment")
             overall = sent_data.get("overall_sentiment","NEUTRAL")
-            s_icon = "🟢" if "BULL" in overall else "🔴" if "BEAR" in overall else "🟡"
+            s_icon  = "🟢" if "BULL" in overall else "🔴" if "BEAR" in overall else "🟡"
             sc1,sc2 = st.columns([1,2])
             with sc1:
-                st.metric(f"{s_icon} Sentiment", overall, f"Score: {sent_score}/100")
+                st.metric(f"{s_icon} Sentiment", overall, f"{sent_score}/100")
             with sc2:
                 themes = sent_data.get("key_themes",[])
                 if themes: st.markdown("**Themes:** " + " • ".join(themes))
@@ -193,39 +252,56 @@ with tab1:
             st.markdown("---")
             st.subheader("🧠 AI Market Brief")
             if result.get("explanation"): st.markdown(result["explanation"])
-        else:
-            st.error(f"No data for '{ticker}'. Try: RELIANCE, HDFCBANK, TCS, INFY, WIPRO")
-    elif not analyze_btn:
-        st.info("👆 Enter NSE ticker and click Analyze")
-        with st.expander("🔍 What happens?"):
-            st.markdown("""
-1. 🔍 **PatternDetectorAgent** — RSI, MACD, Golden Cross, Bollinger Bands, EMA (pure pandas)
-2. 📡 **SignalFinderAgent** — P/E, 52W proximity, dividend yield, bulk deals
-3. 📰 **NewsSentimentAgent** — Gemini 1.5 Flash news analysis with source citations
-4. 🧠 **ExplanationAgent** — Plain English AI brief with SEBI disclaimer
-5. 📊 **Candlestick Chart** — interactive 90-day Plotly dark chart
 
-Coordinated by **LangGraph StateGraph** with full audit trail.
+        else:
+            # Price is 0 — ticker not found
+            ticker_tried = result.get("ticker", raw_input.upper())
+            st.error(f"❌ No NSE data found for **'{raw_input.upper()}'** (resolved: {ticker_tried})")
+            st.warning("📌 Use the **exact NSE ticker symbol**, not the company name.")
+            st.info("""
+**Common Mistakes → Correct Tickers:**
+- INFOSYS → **INFY** ✅
+- HDFC → **HDFCBANK** ✅  
+- SBI → **SBIN** ✅
+- HCL → **HCLTECH** ✅
+- L&T → **LT** ✅
+- HUL → **HINDUNILVR** ✅
+- BAJAJ FINANCE → **BAJFINANCE** ✅
+- TECH MAHINDRA → **TECHM** ✅
+
+Or click any **Quick Select** button above ↑
             """)
 
-# ══ TAB 2 ─ SECTOR HEATMAP ═════════════════════════════════════════════════════════
+    elif not analyze_btn:
+        st.info("👆 Enter an NSE ticker or company name above and click Analyze")
+        with st.expander("🔍 What does each agent do?"):
+            st.markdown("""
+1. 🔍 **PatternDetectorAgent** — RSI, MACD, Golden Cross, Bollinger Bands, EMA (pure pandas, no external TA lib)
+2. 📡 **SignalFinderAgent** — P/E ratio, 52W proximity, dividend yield, bulk deal signals
+3. 📰 **NewsSentimentAgent** — Gemini 2.0 Flash news analysis with source citations
+4. 🧠 **ExplanationAgent** — Plain English AI brief with SEBI disclaimer
+5. 📊 **Candlestick Chart** — Interactive 90-day Plotly dark-theme chart
+
+All coordinated by **LangGraph StateGraph** with full audit trail.
+            """)
+
+# ══ TAB 2 ─ SECTOR HEATMAP
 with tab2:
     st.subheader("🌡️ NSE Sector Heatmap — Live")
-    st.caption("Size = Market Cap | Color = % change today | 40 stocks across 8 sectors")
-    st.warning("⏱️ Takes 20–30 seconds — fetching live data for 40 stocks")
+    st.caption("Size = Market Cap | Color = % change today | 40 stocks × 8 sectors")
+    st.warning("⏱️ Takes 20–30 sec — fetching live data for 40 stocks")
     if st.button("🔄 Load Heatmap", type="primary", key="heatmap_btn"):
         with st.spinner("Fetching live sector data..."):
             try:
                 st.plotly_chart(build_sector_heatmap(), use_container_width=True)
-                st.caption("🟢 Green = up | 🔴 Red = down | Size = market cap")
             except Exception as e:
                 st.error(f"Heatmap error: {e}")
 
-# ══ TAB 3 ─ RACE CHART ════════════════════════════════════════════════════════════
+# ══ TAB 3 ─ RACE CHART
 with tab3:
     st.subheader("🏆 Nifty Top-10 Race Chart")
     st.caption("Animated AI Market Video Engine — performance normalized to base 100")
-    st.info("🎥 StockSense AI's animated market video — fully data-driven, no static slides")
+    st.info("🎥 StockSense AI animated market video — fully data-driven")
     period_sel = st.selectbox("Period", ["6mo","1y","2y"], index=1,
         format_func=lambda x: {"6mo":"6 Months","1y":"1 Year","2y":"2 Years"}[x])
     if st.button("▶ Generate Race Chart", type="primary", key="race_btn"):
@@ -236,14 +312,14 @@ with tab3:
                     st.plotly_chart(fig_race, use_container_width=True)
                     st.caption("▶ Press Play | Base = 100 at start of period")
                 else:
-                    st.error("No data. Try again.")
+                    st.error("No data returned.")
             except Exception as e:
-                st.error(f"Race chart error: {e}")
+                st.error(f"Race chart: {e}")
 
-# ══ TAB 4 ─ FII/DII ════════════════════════════════════════════════════════════════
+# ══ TAB 4 ─ FII/DII
 with tab4:
     st.subheader("🏦 FII/DII Smart Money Tracker")
-    st.caption("Track institutional capital flows — FII & DII buying/selling activity")
+    st.caption("Track institutional capital flows — Foreign & Domestic buying/selling")
     if st.button("📡 Fetch FII/DII Data", type="primary", key="fiidii_btn"):
         with st.spinner("Connecting to NSE FII/DII feed..."):
             try:
@@ -256,21 +332,21 @@ with tab4:
                 if records:
                     st.dataframe(pd.DataFrame(records[:12]), use_container_width=True, height=380)
             except Exception as e:
-                st.error(f"FII/DII error: {e}")
-    with st.expander("📖 How to read FII/DII data"):
+                st.error(f"FII/DII: {e}")
+    with st.expander("📖 How to read FII/DII"):
         st.markdown("""
 | Signal | Meaning | Impact |
 |---|---|---|
-| 🟢 FII Net Buying | Foreign money entering | Bullish |
-| 🔴 FII Net Selling | Foreign money exiting | Caution |
+| 🟢 FII Net Buying | Foreign money in | Bullish |
+| 🔴 FII Net Selling | Foreign money out | Caution |
 | 🟢 DII Net Buying | Domestic absorbing | Support |
-| FII Sell + DII Buy | Mixed | Finds support at lows |
+| FII Sell + DII Buy | Mixed | Finds support |
         """)
 
-# ══ TAB 5 ─ IPO ═══════════════════════════════════════════════════════════════════
+# ══ TAB 5 ─ IPO
 with tab5:
     st.subheader("🚀 IPO Intelligence Center")
-    st.caption("Gemini 1.5 Flash AI verdict on every active/upcoming NSE IPO")
+    st.caption("Gemini 2.0 Flash AI verdict on every active NSE IPO")
     if st.button("🔍 Scan IPO Pipeline", type="primary", key="ipo_btn"):
         with st.spinner("Scanning NSE IPO pipeline..."):
             try:
@@ -285,21 +361,21 @@ with tab5:
                             ic2.metric("GMP", ipo.get("gmp","N/A"))
                             ic3.metric("Issue Size", ipo.get("issue_size","TBA"))
                             ic4.metric("Category", ipo.get("category","Mainboard"))
-                            verdict = ipo.get("ai_verdict","Verdict unavailable")
+                            verdict = ipo.get("ai_verdict","Unavailable")
                             st.markdown("**🤖 AI Verdict:**")
                             if "STRONG SUBSCRIBE" in verdict: st.success(verdict)
                             elif "SUBSCRIBE" in verdict:      st.info(verdict)
                             elif "AVOID" in verdict:          st.error(verdict)
                             else:                              st.write(verdict)
                 else:
-                    st.info("No active IPOs right now. Check back during IPO window.")
+                    st.info("No active IPOs right now.")
             except Exception as e:
-                st.error(f"IPO error: {e}")
+                st.error(f"IPO: {e}")
 
-# ══ TAB 6 ─ PORTFOLIO CHAT ══════════════════════════════════════════════════════════
+# ══ TAB 6 ─ PORTFOLIO CHAT
 with tab6:
     st.subheader("💬 Portfolio-Aware Market Chat")
-    st.caption("Next-Gen Market ChatGPT — portfolio-aware, source-cited answers")
+    st.caption("AI chat — portfolio-aware, source-cited answers")
     if not portfolio:
         st.info("💡 Add holdings in the sidebar for personalized answers")
     if "chat_history" not in st.session_state:
@@ -336,9 +412,9 @@ with tab6:
             st.session_state.chat_history = []
             st.rerun()
 
-# ── Footer ─────────────────────────────────────────────────────────────
+# ── Footer
 st.markdown("---")
 st.caption(
-    "⚠️ For educational purposes only. Not SEBI-registered advice. | "
+    "⚠️ Educational purposes only. Not SEBI-registered advice. | "
     "**Team NeuralForge** | ET GenAI Hackathon 2026 | PS #6"
 )
