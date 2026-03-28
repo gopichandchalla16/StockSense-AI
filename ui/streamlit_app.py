@@ -64,7 +64,7 @@ from agents.portfolio_chat    import portfolio_chat
 from agents.fii_dii_agent     import fetch_fii_dii_data, get_smart_money_signal
 from agents.ipo_agent         import get_ipo_intelligence
 from agents.morning_briefing  import generate_morning_briefing
-from ui.charts.sector_heatmap import build_sector_heatmap
+from ui.charts.sector_heatmap import build_sector_heatmap, build_sector_bar_chart, build_top_movers_chart
 from ui.charts.race_chart     import build_race_chart
 from utils.ticker_resolver    import resolve_ticker
 
@@ -98,12 +98,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ══ Morning Briefing (clean, no error leaks)
+# ══ Morning Briefing
 if "morning_briefing" not in st.session_state:
     try:
         st.session_state.morning_briefing = generate_morning_briefing()
     except Exception:
-        st.session_state.morning_briefing = _safe_offline_briefing()
+        st.session_state.morning_briefing = "🌅 Market brief loading... Please refresh."
 
 with st.expander("🌅 Today's AI Morning Briefing — click to expand", expanded=False):
     st.markdown(st.session_state.morning_briefing)
@@ -212,20 +212,16 @@ with tab1:
     if analyze_btn and ticker_input.strip():
         raw_input   = ticker_input.strip()
         resolved, _ = resolve_ticker(raw_input)
-
         if resolved.upper() != raw_input.upper():
             st.info(f"✅ Auto-resolved **{raw_input.upper()}** → **{resolved}**")
-
         st.markdown(f"""
         <div style='background:linear-gradient(90deg,rgba(0,212,255,.08),rgba(123,47,247,.08));
         border:1px solid rgba(0,212,255,0.2);border-radius:10px;padding:12px 20px;margin:10px 0'>
         🚀 Running <b>4-Agent LangGraph Pipeline</b> on
         <b style='color:#00d4ff'>{resolved}.NS</b>…
         </div>""", unsafe_allow_html=True)
-
         with st.spinner(f"Analyzing {resolved}… (15-25 sec)"):
             result = analyze_stock(raw_input)
-
         pd_data   = result.get("pattern_data")  or {}
         sd_data   = result.get("signal_data")    or {}
         sent_data = result.get("sentiment_data") or {}
@@ -237,7 +233,6 @@ with tab1:
             sent_score = sent_data.get("sentiment_score", 50)
             overall_s  = sent_data.get("overall_sentiment", "NEUTRAL")
             s_emoji    = "🟢" if "BULL" in overall_s else "🔴" if "BEAR" in overall_s else "🟡"
-
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("💰 Price",    f"₹{price:,.2f}")
             m2.metric("📅 1D",       f"{change_1d:+.2f}%",  delta=f"{change_1d:+.2f}%")
@@ -245,34 +240,24 @@ with tab1:
             m4.metric("🏢 Sector",   sd_data.get("sector", "N/A"))
             m5.metric(f"{s_emoji} Sentiment", overall_s[:10], f"{sent_score}/100")
 
-            # ══ Candlestick — FIXED: valid hex colors only (6-digit)
             raw_candles = pd_data.get("data", [])
             if raw_candles:
                 try:
                     dfc      = pd.DataFrame(raw_candles)
                     date_col = "Date" if "Date" in dfc.columns else "index"
                     fig_c    = go.Figure(go.Candlestick(
-                        x=dfc[date_col],
-                        open=dfc["Open"], high=dfc["High"],
-                        low=dfc["Low"],   close=dfc["Close"],
-                        name=resolved,
-                        increasing_line_color="#00ff88",
-                        decreasing_line_color="#ff4444",
-                        increasing_fillcolor="#00cc66",
-                        decreasing_fillcolor="#cc2222",
+                        x=dfc[date_col], open=dfc["Open"], high=dfc["High"],
+                        low=dfc["Low"],  close=dfc["Close"], name=resolved,
+                        increasing_line_color="#00ff88", decreasing_line_color="#ff4444",
+                        increasing_fillcolor="#00cc66",  decreasing_fillcolor="#cc2222",
                     ))
                     fig_c.update_layout(
-                        title=dict(
-                            text=f"📈 {resolved} — 90-Day Candlestick Chart (NSE)",
-                            font=dict(color="#00d4ff", size=15),
-                        ),
-                        template="plotly_dark",
-                        height=430,
+                        title=dict(text=f"📈 {resolved} — 90-Day Candlestick Chart (NSE)",
+                                   font=dict(color="#00d4ff", size=15)),
+                        template="plotly_dark", height=430,
                         xaxis_rangeslider_visible=False,
-                        paper_bgcolor="#080f1f",
-                        plot_bgcolor="#0a1020",
+                        paper_bgcolor="#080f1f", plot_bgcolor="#0a1020",
                         margin=dict(t=50, l=10, r=10, b=10),
-                        # FIXED: valid 6-digit hex colors
                         xaxis=dict(gridcolor="#1a2a3a", linecolor="#1a2a3a"),
                         yaxis=dict(gridcolor="#1a2a3a", linecolor="#1a2a3a"),
                     )
@@ -280,7 +265,6 @@ with tab1:
                 except Exception as e:
                     st.warning(f"📉 Chart unavailable: {e}")
 
-            # ══ Patterns + Signals
             left, right = st.columns(2)
             with left:
                 st.markdown("<div class='result-title'>📈 Detected Chart Patterns</div>", unsafe_allow_html=True)
@@ -294,15 +278,12 @@ with tab1:
                         st.markdown(
                             f"<div class='pattern-pill' style='border-color:{color}'>"
                             f"{icon} <b>{p.get('pattern','?')}</b> &nbsp;"
-                            f"<span style='color:#5a7a96;font-size:.8rem'>{conf}% confidence</span><br>"
+                            f"<span style='color:#5a7a96;font-size:.8rem'>{conf}% conf</span><br>"
                             f"<span style='color:#8ab0c8;font-size:.8rem'>{sig}</span>"
                             + (f"<br><span style='color:#5a7a96;font-size:.78rem'>{p.get('detail','')}</span>" if p.get('detail') else "")
-                            + "</div>",
-                            unsafe_allow_html=True,
-                        )
+                            + "</div>", unsafe_allow_html=True)
                 else:
                     st.info("No strong patterns detected.")
-
             with right:
                 st.markdown("<div class='result-title'>🎯 Opportunity Signals</div>", unsafe_allow_html=True)
                 sigs = sd_data.get("signals", [])
@@ -317,13 +298,10 @@ with tab1:
                             f"<span style='color:{color};font-size:.78rem'>{strength}</span><br>"
                             f"<span style='color:#8ab0c8;font-size:.8rem'>{s.get('message','')}</span><br>"
                             f"<span style='color:{color};font-size:.8rem'>→ {s.get('action','')}</span>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
+                            "</div>", unsafe_allow_html=True)
                 else:
                     st.info("No opportunity signals.")
 
-            # ══ Fundamentals
             fund = sd_data.get("fundamentals", {})
             if any(v for v in fund.values() if v is not None):
                 st.markdown("")
@@ -334,7 +312,6 @@ with tab1:
                 f3.metric("52W High",  f"₹{fund.get('52w_high','N/A')}")
                 f4.metric("52W Low",   f"₹{fund.get('52w_low','N/A')}")
 
-            # ══ News
             st.markdown("")
             st.markdown("<div class='result-title'>📰 News Sentiment</div>", unsafe_allow_html=True)
             ns1, ns2 = st.columns([1, 2])
@@ -343,56 +320,38 @@ with tab1:
             with ns2:
                 themes = sent_data.get("key_themes", [])
                 if themes:
-                    st.markdown("**Themes:** " + " \u2022 ".join(themes))
+                    st.markdown("**Themes:** " + " • ".join(themes))
                 analysis = sent_data.get("analysis", "")
                 if analysis and "429" not in analysis and "quota" not in analysis.lower():
                     st.caption(analysis)
             with st.expander("📰 News Headlines"):
                 headlines = sent_data.get("raw_news", [])
-                shown = [n for n in headlines if n.get("title") and n.get("title") != ""]
+                shown = [n for n in headlines if n.get("title")]
                 if shown:
                     for n in shown:
-                        st.markdown(
-                            f"- [{n.get('title','')}]({n.get('url','#')}) — "
-                            f"*{n.get('publisher','Unknown')}* ({n.get('date','')})"
-                        )
+                        st.markdown(f"- [{n.get('title','')}]({n.get('url','#')}) — *{n.get('publisher','Unknown')}* ({n.get('date','')})")
                 else:
                     st.info("No news headlines available for this stock right now.")
 
-            # ══ AI Brief
             st.markdown("---")
             st.markdown("<div class='result-title'>🧠 AI Market Brief</div>", unsafe_allow_html=True)
             expl = result.get("explanation", "")
-            # Strip raw API errors from brief
             if expl and ("429" in expl or "quota" in expl.lower() or "AI analysis temporarily" in expl):
                 expl = ""
             if expl:
-                st.markdown(
-                    f"<div class='ai-card'>{expl}</div>",
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"<div class='ai-card'>{expl}</div>", unsafe_allow_html=True)
             else:
-                # Show offline brief directly
                 from agents.llm_router import offline_brief
-                ob = offline_brief(
-                    ticker=resolved,
-                    pattern_data=pd_data,
-                    signal_data=sd_data,
-                    sentiment_data=sent_data,
-                )
-                st.markdown(
-                    f"<div class='ai-card'>{ob}</div>",
-                    unsafe_allow_html=True,
-                )
+                ob = offline_brief(ticker=resolved, pattern_data=pd_data,
+                                   signal_data=sd_data, sentiment_data=sent_data)
+                st.markdown(f"<div class='ai-card'>{ob}</div>", unsafe_allow_html=True)
 
-            # ══ Audit trail (collapsed)
             with st.expander("🤖 Agent Audit Trail", expanded=False):
                 for log in result.get("step_log", []):
                     if "✅" in log:   st.success(log)
                     elif "❌" in log: st.error(log)
                     elif "⚠️" in log: st.warning(log)
                     else:             st.info(log)
-
         else:
             st.markdown(f"""
             <div style='background:rgba(255,68,68,.08);border:1px solid rgba(255,68,68,0.3);
@@ -403,7 +362,6 @@ with tab1:
             &nbsp;&nbsp;• HCL → <b>HCLTECH</b> &nbsp; • L&T → <b>LT</b> &nbsp; • HUL → <b>HINDUNILVR</b><br><br>
             📖 Check the NSE Ticker Reference expander above.
             </div>""", unsafe_allow_html=True)
-
     elif not analyze_btn:
         st.markdown("""
         <div style='background:rgba(0,212,255,.04);border:1px dashed rgba(0,212,255,0.2);
@@ -414,8 +372,7 @@ with tab1:
         <div style='color:#5a7a96;font-size:.85rem'>
         Supports all NSE stocks — Nifty 50, Nifty 200, SME, and beyond<br>
         Click a demo chip above or type any ticker / company name
-        </div></div>
-        """, unsafe_allow_html=True)
+        </div></div>""", unsafe_allow_html=True)
         with st.expander("🔬 What does each agent do?", expanded=False):
             st.markdown("""
 1. 🔍 **PatternDetectorAgent** — RSI-14, MACD, Golden/Death Cross, Bollinger Bands, EMA 20/50
@@ -426,26 +383,54 @@ with tab1:
             """)
 
 
-# ════════ TAB 2 — SECTOR HEATMAP
+# ════════ TAB 2 — SECTOR HEATMAP (3 charts)
 with tab2:
-    st.markdown("### 🌡️ NSE Sector Heatmap — Live Performance")
-    st.caption("40 stocks across 8 sectors | Block size = market cap | Color = % change today")
-    st.info("⏱️ Takes 20-30 sec to load live data for all 40 stocks. Click the button below.")
-    if st.button("🔄 Load Live Sector Heatmap", type="primary", key="heatmap_btn"):
-        with st.spinner("Fetching live NSE data for 8 sectors (40 stocks)…"):
-            try:
-                fig_heat = build_sector_heatmap()
-                st.plotly_chart(fig_heat, use_container_width=True)
-                st.markdown("""
-                <div style='display:flex;gap:20px;margin-top:8px'>
-                <span>🟢 <b>Dark Green</b> = Strong gain (&gt;1%)</span>
-                <span>🟢 <b>Light Green</b> = Mild gain</span>
-                <span>⬛ <b>Dark</b> = Flat / neutral</span>
-                <span>🔴 <b>Light Red</b> = Mild loss</span>
-                <span>🔴 <b>Dark Red</b> = Strong loss (&lt;-1%)</span>
-                </div>""", unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Heatmap error: {e}")
+    st.markdown("### 🌡️ NSE Sector Intelligence — Live Performance Dashboard")
+    st.caption("40 NSE stocks across 8 sectors — 3 chart views for complete market picture")
+
+    h_tab1, h_tab2, h_tab3 = st.tabs([
+        "🌡️ Treemap (Market Cap)",
+        "📊 Sector Bar Chart",
+        "🔥 Top Movers",
+    ])
+
+    with h_tab1:
+        st.info("⏱️ Loads 40 stocks live (20-30 sec). Block size = market cap. Color = % change today.")
+        if st.button("🔄 Load Sector Treemap", type="primary", key="treemap_btn"):
+            with st.spinner("Building live NSE treemap (8 sectors, 40 stocks)…"):
+                try:
+                    fig_heat = build_sector_heatmap()
+                    st.plotly_chart(fig_heat, use_container_width=True)
+                    col_a, col_b, col_c, col_d, col_e = st.columns(5)
+                    col_a.markdown("🟥 **Dark Red** = Loss >2%")
+                    col_b.markdown("🔴 **Red** = Loss")
+                    col_c.markdown("⬛ **Dark** = Flat")
+                    col_d.markdown("🟢 **Green** = Gain")
+                    col_e.markdown("🟩 **Dark Green** = Gain >2%")
+                except Exception as e:
+                    st.error(f"Treemap error: {e}")
+
+    with h_tab2:
+        st.info("📊 Sector-level average % change today — instantly shows winners vs losers.")
+        if st.button("🔄 Load Sector Bar Chart", type="primary", key="bar_btn"):
+            with st.spinner("Fetching sector performance data…"):
+                try:
+                    fig_bar = build_sector_bar_chart()
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                    st.caption("🟢 Green bars = sector gaining today | 🔴 Red bars = sector under pressure")
+                except Exception as e:
+                    st.error(f"Bar chart error: {e}")
+
+    with h_tab3:
+        st.info("🔥 Top 5 gainers vs top 5 losers across all 40 tracked NSE stocks — today.")
+        if st.button("🔄 Load Top Movers", type="primary", key="movers_btn"):
+            with st.spinner("Scanning 40 stocks for today's biggest movers…"):
+                try:
+                    fig_mv = build_top_movers_chart()
+                    st.plotly_chart(fig_mv, use_container_width=True)
+                    st.caption("🟢 Right side = today's top gainers | 🔴 Left side = today's top losers")
+                except Exception as e:
+                    st.error(f"Top movers error: {e}")
 
 
 # ════════ TAB 3 — RACE CHART
@@ -526,7 +511,7 @@ with tab5:
                                 elif "AVOID" in verdict:          st.error(verdict)
                                 else:                              st.write(verdict)
                             else:
-                                st.info("🤖 AI verdict: Applying rule-based analysis — check GMP and subscription status for entry decision.")
+                                st.info("🤖 Rule-based verdict: Check GMP and subscription status for entry decision.")
                 else:
                     st.info("No active IPOs right now. Check back during an IPO window.")
             except Exception as e:
